@@ -223,13 +223,45 @@ def render_topbar():
 # MAIN APP
 # =============================================================================
 
+def _auto_guest_login():
+    """Auto-login as guest user for development (no auth required)."""
+    if st.session_state.get("authenticated"):
+        return  # Already logged in
+
+    from database import get_db, User
+    db = next(get_db())
+    try:
+        # Find or create a guest user
+        guest = db.query(User).filter_by(email="guest@runnermatch.dev").first()
+        if not guest:
+            guest = User(
+                email="guest@runnermatch.dev",
+                role="verified",
+                language=config.DEFAULT_LANGUAGE,
+            )
+            db.add(guest)
+            db.commit()
+            db.refresh(guest)
+
+        st.session_state.authenticated = True
+        st.session_state.user_uid = f"guest_{guest.id}"
+        st.session_state.user_email = guest.email
+        st.session_state.user_role = guest.role
+        st.session_state.user_db_id = guest.id
+        st.session_state.id_token = "guest_token"
+    except Exception as e:
+        st.error(f"Guest login error: {e}")
+    finally:
+        db.close()
+
+
 def main():
     render_topbar()
 
+    # --- AUTO-LOGIN (remove this block when enabling real auth) ---
     if not is_authenticated():
-        from pages.auth_page import render_login
-        render_login()
-        return
+        _auto_guest_login()
+    # --- END AUTO-LOGIN ---
 
     # Set default page based on user state
     if "page" not in st.session_state:
