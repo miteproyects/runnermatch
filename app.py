@@ -175,7 +175,7 @@ def render_navigation():
     with cols[2]:
         if st.button(f"✅\n{t('verify_race')}", use_container_width=True, key="nav_verify"):
             st.session_state.page = "verify"
-            st.reru�()
+            st.rerun()
 
     with cols[3]:
         if st.button(f"👤\n{t('profile')}", use_container_width=True, key="nav_profile"):

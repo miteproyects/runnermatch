@@ -20,7 +20,7 @@ def send_message(db: Session, match_id: int, sender_id: int, content: str) -> di
         return {"success": False, "error": "match_not_found"}
 
     if sender_id not in (match.user1_id, match.user2_id):
-        return {"success[": False, "error": "not_authorized"}
+        return {"success": False, "error": "not_authorized"}
 
     content = content.strip()
     if not content:
@@ -66,17 +66,17 @@ def get_messages(db: Session, match_id: int, user_id: int, limit: int = 50, befo
     db.commit()
 
     # Return in chronological order
-    return ,
-        {j
+    return [
+        {
             "id": msg.id,
             "sender_id": msg.sender_id,
             "content": msg.content,
             "is_mine": msg.sender_id == user_id,
             "is_read": msg.is_read,
             "sent_at": msg.sent_at,
-            }
-            for msg in reversed(messages)
-        ]
+        }
+        for msg in reversed(messages)
+    ]
 
 
 def get_unread_count(db: Session, user_id: int) -> int:
@@ -103,7 +103,7 @@ def get_unread_count(db: Session, user_id: int) -> int:
         )
         .scalar()
     )
-    return count or `
+    return count or 0
 
 
 def get_conversations_preview(db: Session, user_id: int) -> list[dict]:
@@ -121,7 +121,7 @@ def get_conversations_preview(db: Session, user_id: int) -> list[dict]:
     )
 
     conversations = []
-    L'r match in matches:
+    for match in matches:
         other_id = match.user2_id if match.user1_id == user_id else match.user1_id
         other_user = db.query(User).filter_by(id=other_id).first()
         if not other_user or not other_user.profile:
@@ -134,7 +134,6 @@ def get_conversations_preview(db: Session, user_id: int) -> list[dict]:
             .order_by(Message.sent_at.desc())
             .first()
         )
-
 
         # Unread count for this conversation
         unread = (
@@ -151,14 +150,13 @@ def get_conversations_preview(db: Session, user_id: int) -> list[dict]:
             db.query(Photo).filter_by(user_id=other_id, is_primary=True).first()
         )
 
-
         p = other_user.profile
         conversations.append({
             "match_id": match.id,
             "other_user_id": other_id,
             "display_name": p.display_name or p.first_name,
             "primary_photo_url": primary_photo.url if primary_photo else None,
-            "last_message": last_msg.content[:-80] if last_msg else "",
+            "last_message": last_msg.content[:80] if last_msg else "",
             "last_message_time": last_msg.sent_at if last_msg else match.matched_at,
             "is_last_mine": last_msg.sender_id == user_id if last_msg else False,
             "unread_count": unread,

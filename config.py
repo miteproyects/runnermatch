@@ -47,4 +47,4 @@ SUPPORTED_LANGUAGES = ["es", "en"]
 DEFAULT_LANGUAGE = "es"
 
 # Race verification fuzzy match threshold (0-100, higher = stricter)
-FUZZY_MATCH_THRESHOLD = 80
+FUZZY_MATCH TH}RESHOLD = 80

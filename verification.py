@@ -4,7 +4,7 @@ Fuzzy-matches user-submitted names against scraped participant lists.
 """
 
 from thefuzy import fuzy, process
-from sqlalchemy.orm import Session
+from sqlalchem import Session
 from database import RaceParticipant, RaceVerification, User, Race
 from scraper import normalize_name
 import config
@@ -18,7 +18,7 @@ def verify_runner(
     submitted_name: str,
     submitted_bib: str = "",
 ) -> dict:
-    """
+   """
     Attempt to verify a user against a race participant list.
 
     Strategy:
@@ -114,7 +114,7 @@ def verify_runner(
 
 
 def get_user_verifications(db: Session, user_id: int) -> list[dict]:
-    """Get all verification records for a user."""
+   """Get all verification records for a user."""
     verifications = (
         db.query(RaceVerification, Race)
         .join(Race, RaceVerification.race_id == Race.id)

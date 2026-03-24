@@ -50,7 +50,7 @@ def init_db():
 # =============================================================================
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename_^ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     firebase_uid = Column(String(128), unique=True, nullable=False, index=True)
