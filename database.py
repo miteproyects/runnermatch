@@ -40,9 +40,26 @@ def get_db():
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, and run migrations."""
     if engine:
         Base.metadata.create_all(bind=engine)
+        # --- Migrations: add columns that may be missing ---
+        from sqlalchemy import text, inspect as sa_inspect
+        insp = sa_inspect(engine)
+        if insp.has_table("users"):
+            cols = [c["name"] for c in insp.get_columns("users")]
+            with engine.begin() as conn:
+                if "password_hash" not in cols:
+                    conn.execute(text(
+                        "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"
+                    ))
+                if "firebase_uid" in cols:
+                    try:
+                        conn.execute(text(
+                            "ALTER TABLE users ALTER COLUMN firebase_uid DROP NOT NULL"
+                        ))
+                    except Exception:
+                        pass
 
 
 # =============================================================================
