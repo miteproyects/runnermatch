@@ -53,8 +53,9 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    firebase_uid = Column(String(128), unique=True, nullable=False, index=True)
+    firebase_uid = Column(String(128), unique=True, nullable=True, index=True)
     email = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=True)  # For DB-based auth fallback
     role = Column(String(20), default="unverified")  # unverified, verified, admin
     language = Column(String(5), default="es")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

@@ -48,39 +48,51 @@ def _render_login_form():
             result = auth.sign_in(email, password)
 
         if result["success"]:
-            # Get or create user in database
-            db = next(get_db())
-            try:
-                user = db.query(User).filter_by(firebase_uid=result["uid"]).first()
-                if user:
-                    auth.set_authenticated(
-                        uid=result["uid"],
-                        email=result["email"],
-                        id_token=result["id_token"],
-                        refresh_token=result["refresh_token"],
-                        role=user.role,
-                        db_id=user.id,
-                    )
-                    st.session_state.language = user.language
-                else:
-                    # User exists in Firebase but not in our DB (edge case)
-                    new_user = User(
-                        firebase_uid=result["uid"],
-                        email=result["email"],
-                        language=st.session_state.get("language", "es"),
-                    )
-                    db.add(new_user)
-                    db.commit()
-                    auth.set_authenticated(
-                        uid=result["uid"],
-                        email=result["email"],
-                        id_token=result["id_token"],
-                        refresh_token=result["refresh_token"],
-                        role="unverified",
-                        db_id=new_user.id,
-                    )
-            finally:
-                db.close()
+            # DB-based auth already returns db_id and role
+            if result.get("db_id"):
+                auth.set_authenticated(
+                    uid=result["uid"],
+                    email=result["email"],
+                    id_token=result["id_token"],
+                    refresh_token=result["refresh_token"],
+                    role=result.get("role", "unverified"),
+                    db_id=result["db_id"],
+                )
+                if result.get("language"):
+                    st.session_state.language = result["language"]
+            else:
+                # Firebase auth - look up user in DB
+                db = next(get_db())
+                try:
+                    user = db.query(User).filter_by(firebase_uid=result["uid"]).first()
+                    if user:
+                        auth.set_authenticated(
+                            uid=result["uid"],
+                            email=result["email"],
+                            id_token=result["id_token"],
+                            refresh_token=result["refresh_token"],
+                            role=user.role,
+                            db_id=user.id,
+                        )
+                        st.session_state.language = user.language
+                    else:
+                        new_user = User(
+                            firebase_uid=result["uid"],
+                            email=result["email"],
+                            language=st.session_state.get("language", "es"),
+                        )
+                        db.add(new_user)
+                        db.commit()
+                        auth.set_authenticated(
+                            uid=result["uid"],
+                            email=result["email"],
+                            id_token=result["id_token"],
+                            refresh_token=result["refresh_token"],
+                            role="unverified",
+                            db_id=new_user.id,
+                        )
+                finally:
+                    db.close()
 
             st.rerun()
         else:
@@ -123,27 +135,37 @@ def _render_signup_form():
             result = auth.sign_up(email, password)
 
         if result["success"]:
-            # Create user in database
-            db = next(get_db())
-            try:
-                new_user = User(
-                    firebase_uid=result["uid"],
-                    email=email,
-                    language=st.session_state.get("language", "es"),
-                )
-                db.add(new_user)
-                db.commit()
-
+            # DB-based auth already created the user in the DB
+            if result.get("db_id"):
                 auth.set_authenticated(
                     uid=result["uid"],
                     email=email,
                     id_token=result["id_token"],
                     refresh_token=result["refresh_token"],
                     role="unverified",
-                    db_id=new_user.id,
+                    db_id=result["db_id"],
                 )
-            finally:
-                db.close()
+            else:
+                # Firebase auth - create user in database
+                db = next(get_db())
+                try:
+                    new_user = User(
+                        firebase_uid=result["uid"],
+                        email=email,
+                        language=st.session_state.get("language", "es"),
+                    )
+                    db.add(new_user)
+                    db.commit()
+                    auth.set_authenticated(
+                        uid=result["uid"],
+                        email=email,
+                        id_token=result["id_token"],
+                        refresh_token=result["refresh_token"],
+                        role="unverified",
+                        db_id=new_user.id,
+                    )
+                finally:
+                    db.close()
 
             st.success(t("verification_email_sent"))
             st.rerun()

@@ -1,124 +1,242 @@
 """
-RunnerMatch - Firebase Authentication Module
+RunnerMatch - Authentication Module
 Handles sign-up, login, password reset, and session management.
+Supports Firebase Auth (primary) with DB-based bcrypt fallback.
 """
 
-import json
+import uuid
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, auth as firebase_auth
+import bcrypt
 import config
 
 # =============================================================================
 # FIREBASE INITIALIZATION
 # =============================================================================
 
+_firebase_available = False
+
 def init_firebase():
     """Initialize Firebase Admin SDK (once)."""
-    if not firebase_admin._apps:
-        if config.FIREBASE_CREDENTIALS:
-            cred = credentials.Certificate(config.FIREBASE_CREDENTIALS)
-            firebase_admin.initialize_app(cred, {
-                "storageBucket": config.FIREBASE_STORAGE_BUCKET
-            })
-        else:
-            st.warning("Firebase credentials not configured.")
+    global _firebase_available
+    if config.FIREBASE_CREDENTIALS:
+        try:
+            import firebase_admin
+            from firebase_admin import credentials
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(config.FIREBASE_CREDENTIALS)
+                firebase_admin.initialize_app(cred, {
+                    "storageBucket": config.FIREBASE_STORAGE_BUCKET
+                })
+            _firebase_available = True
+        except Exception as e:
+            st.warning(f"Firebase init error: {e}")
+            _firebase_available = False
+    else:
+        _firebase_available = False
+
+
+def _use_firebase():
+    """Check if Firebase auth is available."""
+    return _firebase_available and bool(config.FIREBASE_CONFIG)
 
 
 def get_pyrebase_app():
     """Get Pyrebase client for client-side auth (login, signup)."""
-    import pyrebase
-    if config.FIREBASE_CONFIG:
+    if not _use_firebase():
+        return None
+    try:
+        import pyrebase
         return pyrebase.initialize_app(config.FIREBASE_CONFIG)
-    return None
+    except Exception:
+        return None
 
 
 # =============================================================================
-# AUTHENTICATION FUNCTIONS
+# DB-BASED AUTH FALLBACK (bcrypt)
 # =============================================================================
 
-def sign_up(email: str, password: str) -> dict:
-    """
-    Create a new user with Firebase Authentication.
-    Returns: {"success": True, "uid": "...", "email": "..."} or {"success": False, "error": "..."}
-    """
+def _hash_password(password: str) -> str:
+    """Hash a password with bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _check_password(password: str, hashed: str) -> bool:
+    """Verify a password against its bcrypt hash."""
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+
+def _db_sign_up(email: str, password: str) -> dict:
+    """Create a new user using DB-based auth."""
+    from database import get_db, User
     try:
-        pb = get_pyrebase_app()
-        if not pb:
-            return {"success": False, "error": "Firebase not configured"}
-
-        auth_client = pb.auth()
-        user = auth_client.create_user_with_email_and_password(email, password)
-
-        # Send email verification
-        auth_client.send_email_verification(user["idToken"])
-
-        return {
-            "success": True,
-            "uid": user["localId"],
-            "email": email,
-            "id_token": user["idToken"],
-            "refresh_token": user["refreshToken"],
-        }
-    except Exception as e:
-        error_msg = str(e)
-        if "EMAIL_EXISTS" in error_msg:
+        db = next(get_db())
+        existing = db.query(User).filter_by(email=email).first()
+        if existing:
+            db.close()
             return {"success": False, "error": "email_exists"}
-        elif "WEAK_PASSWORD" in error_msg:
-            return {"success": False, "error": "weak_password"}
-        elif "INVALID_EMAIL" in error_msg:
-            return {"success": False, "error": "invalid_email"}
-        return {"success": False, "error": error_msg}
 
-
-def sign_in(email: str, password: str) -> dict:
-    """
-    Sign in an existing user.
-    Returns: {"success": True, "uid": "...", ...} or {"success": False, "error": "..."}
-    """
-    try:
-        pb = get_pyrebase_app()
-        if not pb:
-            return {"success": False, "error": "Firebase not configured"}
-
-        auth_client = pb.auth()
-        user = auth_client.sign_in_with_email_and_password(email, password)
+        uid = f"local_{uuid.uuid4().hex[:24]}"
+        pw_hash = _hash_password(password)
+        new_user = User(
+            firebase_uid=uid,
+            email=email,
+            password_hash=pw_hash,
+            language=st.session_state.get("language", "es"),
+        )
+        db.add(new_user)
+        db.commit()
+        db_id = new_user.id
+        db.close()
 
         return {
             "success": True,
-            "uid": user["localId"],
+            "uid": uid,
             "email": email,
-            "id_token": user["idToken"],
-            "refresh_token": user["refreshToken"],
+            "id_token": f"local_token_{uid}",
+            "refresh_token": f"local_refresh_{uid}",
+            "db_id": db_id,
         }
-    except Exception as e:
-        error_msg = str(e)
-        if "INVALID_LOGIN_CREDENTIALS" in error_msg or "INVALID_PASSWORD" in error_msg:
-            return {"success": False, "error": "invalid_credentials"}
-        elif "USER_DISABLED" in error_msg:
-            return {"success": False, "error": "user_disabled"}
-        elif "TOO_MANY_ATTEMPTS" in error_msg:
-            return {"success": False, "error": "too_many_attempts"}
-        return {"success": False, "error": error_msg}
-
-
-def reset_password(email: str) -> dict:
-    """Send password reset email."""
-    try:
-        pb = get_pyrebase_app()
-        if not pb:
-            return {"success": False, "error": "Firebase not configured"}
-
-        auth_client = pb.auth()
-        auth_client.send_password_reset_email(email)
-        return {"success": True}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
+def _db_sign_in(email: str, password: str) -> dict:
+    """Sign in using DB-based auth."""
+    from database import get_db, User
+    try:
+        db = next(get_db())
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            db.close()
+            return {"success": False, "error": "invalid_credentials"}
+
+        if not user.password_hash:
+            db.close()
+            return {"success": False, "error": "invalid_credentials"}
+
+        if not _check_password(password, user.password_hash):
+            db.close()
+            return {"success": False, "error": "invalid_credentials"}
+
+        uid = user.firebase_uid or f"local_{user.id}"
+        db_id = user.id
+        role = user.role
+        lang = user.language
+        db.close()
+
+        return {
+            "success": True,
+            "uid": uid,
+            "email": email,
+            "id_token": f"local_token_{uid}",
+            "refresh_token": f"local_refresh_{uid}",
+            "db_id": db_id,
+            "role": role,
+            "language": lang,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# AUTHENTICATION FUNCTIONS (unified: Firebase or DB fallback)
+# =============================================================================
+
+def sign_up(email: str, password: str) -> dict:
+    """
+    Create a new user. Uses Firebase if configured, otherwise DB-based auth.
+    Returns: {"success": True, "uid": "...", "email": "..."} or {"success": False, "error": "..."}
+    """
+    if _use_firebase():
+        try:
+            pb = get_pyrebase_app()
+            if not pb:
+                return _db_sign_up(email, password)
+
+            auth_client = pb.auth()
+            user = auth_client.create_user_with_email_and_password(email, password)
+
+            try:
+                auth_client.send_email_verification(user["idToken"])
+            except Exception:
+                pass
+
+            return {
+                "success": True,
+                "uid": user["localId"],
+                "email": email,
+                "id_token": user["idToken"],
+                "refresh_token": user["refreshToken"],
+            }
+        except Exception as e:
+            error_msg = str(e)
+            if "EMAIL_EXISTS" in error_msg:
+                return {"success": False, "error": "email_exists"}
+            elif "WEAK_PASSWORD" in error_msg:
+                return {"success": False, "error": "weak_password"}
+            elif "INVALID_EMAIL" in error_msg:
+                return {"success": False, "error": "invalid_email"}
+            return {"success": False, "error": error_msg}
+    else:
+        return _db_sign_up(email, password)
+
+
+def sign_in(email: str, password: str) -> dict:
+    """
+    Sign in an existing user. Uses Firebase if configured, otherwise DB-based auth.
+    """
+    if _use_firebase():
+        try:
+            pb = get_pyrebase_app()
+            if not pb:
+                return _db_sign_in(email, password)
+
+            auth_client = pb.auth()
+            user = auth_client.sign_in_with_email_and_password(email, password)
+
+            return {
+                "success": True,
+                "uid": user["localId"],
+                "email": email,
+                "id_token": user["idToken"],
+                "refresh_token": user["refreshToken"],
+            }
+        except Exception as e:
+            error_msg = str(e)
+            if "INVALID_LOGIN_CREDENTIALS" in error_msg or "INVALID_PASSWORD" in error_msg:
+                return {"success": False, "error": "invalid_credentials"}
+            elif "USER_DISABLED" in error_msg:
+                return {"success": False, "error": "user_disabled"}
+            elif "TOO_MANY_ATTEMPTS" in error_msg:
+                return {"success": False, "error": "too_many_attempts"}
+            return {"success": False, "error": error_msg}
+    else:
+        return _db_sign_in(email, password)
+
+
+def reset_password(email: str) -> dict:
+    """Send password reset email (Firebase only)."""
+    if _use_firebase():
+        try:
+            pb = get_pyrebase_app()
+            if not pb:
+                return {"success": False, "error": "Not available in local auth mode"}
+            auth_client = pb.auth()
+            auth_client.send_password_reset_email(email)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    else:
+        return {"success": False, "error": "Password reset requires Firebase configuration"}
+
+
 def verify_token(id_token: str) -> dict:
     """Verify a Firebase ID token (server-side)."""
+    if id_token and id_token.startswith("local_token_"):
+        uid = id_token.replace("local_token_", "")
+        return {"success": True, "uid": uid}
     try:
+        from firebase_admin import auth as firebase_auth
         decoded = firebase_auth.verify_id_token(id_token)
         return {"success": True, "uid": decoded["uid"], "email": decoded.get("email")}
     except Exception as e:

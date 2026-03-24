@@ -1,6 +1,8 @@
+setuptools>=75.0.0
 streamlit==1.41.1
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.36
+bcrypt==4.2.1
 firebase-admin==6.6.0
 pyrebase4==4.8.0
 beautifulsoup4==4.12.3
